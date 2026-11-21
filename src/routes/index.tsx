@@ -30,14 +30,16 @@ function Invitation() {
   const [cover, setCover] = useState(true);
   const [journey, setJourney] = useState(false);
   const [main, setMain] = useState(false);
+  const [journeyDone, setJourneyDone] = useState(false);
   const startJourney = useCallback(() => setJourney(true), []);
   const hideCover = useCallback(() => setCover(false), []);
   const showMain = useCallback(() => setMain(true), []);
-  const endJourney = useCallback(() => setJourney(false), []);
+  const endJourney = useCallback(() => setJourneyDone(true), []);
   return (
     <div className="min-h-screen bg-background">
       {main && <Main guest={guest} />}
-      {journey && <Journey onCovered={showMain} onDone={endJourney} />}
+      {/* mounted under the cover from the start so the transition film buffers before the tap */}
+      {!journeyDone && <Journey playing={journey} onCovered={showMain} onDone={endJourney} />}
       <AnimatePresence>
         {cover && <Cover key="cover" guest={guest} onOpenStart={startJourney} onOpened={hideCover} />}
       </AnimatePresence>
