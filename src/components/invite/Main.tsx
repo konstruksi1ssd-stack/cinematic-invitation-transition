@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { motion, useScroll, useTransform, type Variants } from "framer-motion";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useScroll, useTransform, type Variants } from "framer-motion";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ChevronDown, Copy, Gift, Landmark, MapPin, UserRound, X } from "lucide-react";
+import { ChevronDown, Copy, Gift, Landmark, MapPin, MessageCircleHeart, UserRound } from "lucide-react";
 import monogram from "@/assets/monogram.png.asset.json";
 import calendar from "@/assets/calendar.png.asset.json";
 import mosque from "@/assets/mosque.png.asset.json";
@@ -10,14 +11,19 @@ import pin from "@/assets/pin.png.asset.json";
 import emblem from "@/assets/emblem.png.asset.json";
 import pathImg from "@/assets/garden-path.webp.asset.json";
 import leavesImg from "@/assets/garden-leaves.webp.asset.json";
-import g1 from "@/assets/gallery-couple.webp.asset.json";
-import g2 from "@/assets/gallery-rings.webp.asset.json";
-import g3 from "@/assets/gallery-table.webp.asset.json";
 import { ButterflyFlock } from "./Butterfly";
 import { BotanicalSpray, CarvedCorner, FiligreeDivider, Finial, VineCorner } from "./Ornaments";
 import { WEDDING } from "@/lib/wedding";
 import { AR_RUM_21 } from "@/lib/verse";
-import { addEntry, loadEntries, type Entry } from "@/lib/rsvp";
+import { sendWish, wishesQuery, type Wish } from "@/lib/wishes";
+import { ATTEND_OPTIONS, mergeWish, validateWish } from "@/lib/wish-rules";
+import { PetalRain, Twinkles } from "./LiveOrnaments";
+import { GalleryStories } from "./GalleryStories";
+import { WishCard, WishWallOverlay, useLiveWishes } from "./WishWall";
+
+// real-time 3D ornaments load after the page so the first paint stays light
+const GoldDust3D = lazy(() => import("./Ornaments3D").then((m) => ({ default: m.GoldDust3D })));
+const Rings3D = lazy(() => import("./Ornaments3D").then((m) => ({ default: m.Rings3D })));
 
 /**
  * Halaman inti — styled after the reference board: burgundy & navy panels,
@@ -36,14 +42,17 @@ const rise: Variants = { hidden: { opacity: 0, y: 26 }, show: { opacity: 1, y: 0
 
 /* ------------------------------ shared pieces ------------------------------ */
 
-function Band({ children, tone = "navy", className = "", corners = true }: { children: ReactNode; tone?: "navy" | "wine"; className?: string; corners?: boolean }) {
+function Band({ children, tone = "navy", className = "", corners = true, seed = 0, butterflies = 0 }: { children: ReactNode; tone?: "navy" | "wine"; className?: string; corners?: boolean; seed?: number; butterflies?: number }) {
   return (
     <section className={`relative overflow-hidden ${tone === "wine" ? "bg-royal-wine" : "bg-royal-navy"}`}>
       <div className="absolute inset-x-0 top-0 h-px bg-royal-gold/40" />
+      <PetalRain count={6} seed={seed} />
+      <Twinkles count={7} seed={seed} />
+      {butterflies > 0 && <ButterflyFlock count={butterflies} />}
       {corners && (
         <>
-          <CarvedCorner className="pointer-events-none absolute left-1 top-1 w-14 opacity-60 sm:w-20" />
-          <CarvedCorner className="pointer-events-none absolute bottom-1 right-1 w-14 rotate-180 opacity-60 sm:w-20" />
+          <CarvedCorner className="orn-breathe pointer-events-none absolute left-1 top-1 w-14 opacity-60 sm:w-20" style={{ transformOrigin: "top left" }} />
+          <CarvedCorner className="orn-breathe pointer-events-none absolute bottom-1 right-1 w-14 rotate-180 opacity-60 sm:w-20" style={{ transformOrigin: "top left", animationDelay: "-3s" }} />
         </>
       )}
       <div className={`relative mx-auto max-w-md px-5 py-16 text-center sm:max-w-2xl sm:py-24 ${className}`}>
@@ -58,14 +67,14 @@ function Heading({ kicker, children }: { kicker?: string; children: ReactNode })
     <div className="mb-9">
       {kicker && <p className="font-caps text-[10px] uppercase tracking-[0.38em] text-royal-gold-light/75 sm:text-xs">{kicker}</p>}
       <h2 className="mt-2 font-display text-[2.1rem] font-bold leading-tight text-royal-gold sm:text-5xl">{children}</h2>
-      <FiligreeDivider className="mx-auto mt-2 opacity-90" style={{ height: 22, width: 190 }} />
+      <FiligreeDivider className="glint mx-auto mt-2 opacity-90" style={{ height: 22, width: 190 }} />
     </div>
   );
 }
 
 const Hairline = ({ className = "" }: { className?: string }) => (
   <div className={`relative mx-auto h-px w-16 bg-royal-gold/50 ${className}`}>
-    <span className="absolute left-1/2 top-1/2 h-[5px] w-[5px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-royal-gold" aria-hidden />
+    <span className="twinkle-soft absolute left-1/2 top-1/2 h-[5px] w-[5px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-royal-gold" aria-hidden />
   </div>
 );
 
@@ -78,12 +87,17 @@ function Hero({ guest }: { guest: string }) {
       <motion.img src={pathImg.url} alt="" className="absolute inset-0 h-full w-full object-cover mix-blend-soft-light"
         initial={{ opacity: 0 }} animate={{ opacity: 0.35 }} transition={{ duration: 2, ease: "easeOut" }} />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,oklch(0.269_0.096_13.5/0.85))]" />
+      <Suspense fallback={null}>
+        <GoldDust3D className="absolute inset-0" />
+      </Suspense>
+      <Twinkles count={12} seed={1} />
+      <PetalRain count={7} seed={2} />
 
       {/* double gold frame */}
       <div className="pointer-events-none absolute inset-3 rounded-[1.75rem] border border-royal-gold/55 sm:inset-6" />
       <div className="pointer-events-none absolute inset-[20px] rounded-[1.4rem] border border-royal-gold/20 sm:inset-[34px]" />
-      <VineCorner className="pointer-events-none absolute left-2 top-2 w-24 opacity-90 sm:left-4 sm:top-4 sm:w-36" />
-      <VineCorner className="pointer-events-none absolute right-2 top-2 w-24 -scale-x-100 opacity-90 sm:right-4 sm:top-4 sm:w-36" />
+      <VineCorner className="vine-sway pointer-events-none absolute left-2 top-2 w-24 opacity-90 sm:left-4 sm:top-4 sm:w-36" style={{ transformOrigin: "top left" }} />
+      <VineCorner className="vine-sway pointer-events-none absolute right-2 top-2 w-24 -scale-x-100 opacity-90 sm:right-4 sm:top-4 sm:w-36" style={{ transformOrigin: "top left", animationDelay: "-3.5s" }} />
       <BotanicalSpray className="sway pointer-events-none absolute -bottom-2 -left-4 w-40 opacity-90 sm:w-64" />
       <BotanicalSpray className="sway pointer-events-none absolute -bottom-2 -right-4 w-40 opacity-90 sm:w-64" style={{ ["--orn-flip" as string]: "scaleX(-1)" }} />
 
@@ -112,12 +126,12 @@ function Hero({ guest }: { guest: string }) {
 
 function Verse() {
   return (
-    <Band tone="wine">
+    <Band tone="wine" seed={3} butterflies={2}>
       <p className="font-caps text-[10px] uppercase tracking-[0.38em] text-royal-gold-light/75 sm:text-xs">Firman Allah SWT</p>
       <h2 className="mt-1 font-script text-[2.6rem] leading-tight text-royal-gold sm:text-6xl">{AR_RUM_21.reference.replace("QS. ", "Q.S. ")}</h2>
       <div className="relative mx-auto mt-6 rounded-2xl border border-royal-gold/40 px-5 py-8 sm:px-10">
-        <VineCorner className="pointer-events-none absolute -left-2 -top-2 w-14 opacity-80" />
-        <VineCorner className="pointer-events-none absolute -bottom-2 -right-2 w-14 rotate-180 opacity-80" />
+        <VineCorner className="vine-sway pointer-events-none absolute -left-2 -top-2 w-14 opacity-80" style={{ transformOrigin: "top left" }} />
+        <VineCorner className="vine-sway pointer-events-none absolute -bottom-2 -right-2 w-14 rotate-180 opacity-80" style={{ transformOrigin: "top left", animationDelay: "-2s" }} />
         <blockquote dir="rtl" lang="ar" className="font-arabic text-[1.45rem] leading-[2.25] text-ivory sm:text-[1.9rem] sm:leading-[2.2]" style={{ wordSpacing: "0.08em" }}>
           {AR_RUM_21.arabic}
         </blockquote>
@@ -176,7 +190,9 @@ function Couple() {
     <section className="relative overflow-hidden bg-royal-navy">
       {/* burgundy crown band, as in the reference */}
       <div className="absolute inset-x-0 top-0 h-[42%] rounded-b-[50%_3.5rem] border-b border-royal-gold/45 bg-royal-wine" />
-      <CarvedCorner className="pointer-events-none absolute bottom-1 right-1 w-14 rotate-180 opacity-60 sm:w-20" />
+      <PetalRain count={6} seed={5} />
+      <Twinkles count={8} seed={5} />
+      <CarvedCorner className="orn-breathe pointer-events-none absolute bottom-1 right-1 w-14 rotate-180 opacity-60 sm:w-20" style={{ transformOrigin: "top left" }} />
       <div className="relative mx-auto max-w-md px-4 py-16 text-center sm:max-w-3xl sm:py-24">
         <motion.div {...reveal}>
           <p className="font-caps text-[10px] uppercase tracking-[0.38em] text-royal-gold-light/75 sm:text-xs">Bismillahirrahmanirrahim</p>
@@ -190,7 +206,12 @@ function Couple() {
           <Person who="bride" />
           <Person who="groom" />
         </motion.div>
-        <p className="mt-10 font-script text-4xl text-royal-gold/90">&</p>
+        <div className="relative mx-auto mt-8 h-28 w-44 sm:h-36 sm:w-56">
+          <Suspense fallback={null}>
+            <Rings3D className="absolute inset-0" />
+          </Suspense>
+        </div>
+        <p className="font-script text-4xl text-royal-gold/90">&</p>
       </div>
     </section>
   );
@@ -243,53 +264,62 @@ function EventCard({ icon, title, e, tone }: { icon: string; title: string; e: t
 
 /* -------------------------------- gallery --------------------------------- */
 
-const GALLERY = [g1.url, pathImg.url, g2.url, g3.url, leavesImg.url];
-const TILT = ["-rotate-2", "rotate-2", "rotate-1", "-rotate-1", "rotate-2"];
 
 /* ---------------------------------- rsvp ---------------------------------- */
 
 function Rsvp({ guest }: { guest: string }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const qc = useQueryClient();
+  const { data: wishes = [], isError } = useQuery(wishesQuery);
+  useLiveWishes();
+  const [wall, setWall] = useState<{ highlight: string | null } | null>(null);
+  const closeWall = useCallback(() => setWall(null), []);
   const [name, setName] = useState(guest === "Tamu Undangan" ? "" : guest);
-  const [attend, setAttend] = useState("Hadir");
+  const [attend, setAttend] = useState<string>("Hadir");
   const [count, setCount] = useState(1);
   const [msg, setMsg] = useState("");
-  useEffect(() => {
-    setEntries(loadEntries());
-  }, []);
-  const submit = (ev: React.FormEvent) => {
+  const [sending, setSending] = useState(false);
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
-    if (!name.trim() || !msg.trim()) {
-      toast.error("Mohon isi nama dan ucapan.");
+    const v = validateWish({ name, attend, guests: count, message: msg });
+    if (!v.ok) {
+      toast.error(v.error);
       return;
     }
-    setEntries(addEntry({ name: name.trim().slice(0, 60), attend, count, message: msg.trim().slice(0, 500), at: Date.now() }));
-    setMsg("");
-    toast.success("Terima kasih atas konfirmasi dan doanya!");
+    setSending(true);
+    try {
+      const w = await sendWish(v.value);
+      qc.setQueryData<Wish[]>(wishesQuery.queryKey, (old) => mergeWish(old, w));
+      setMsg("");
+      toast.success("Terima kasih atas konfirmasi dan doanya!");
+      setWall({ highlight: w.id });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ucapan belum terkirim.");
+    } finally {
+      setSending(false);
+    }
   };
   const wa = `https://wa.me/${WEDDING.whatsapp}?text=${encodeURIComponent(`Halo, saya ${name || "-"} konfirmasi: ${attend} (${count} orang). ${msg}`)}`;
   return (
     <>
-      {entries.length > 0 ? (
-        <div className="page-scroll mb-6 grid max-h-96 grid-cols-2 gap-3 overflow-y-auto p-1 text-left">
-          {entries.map((e, i) => (
-            <div key={i} className={`${i % 3 === 0 || i % 3 === 2 ? "card-royal-wine" : "card-royal-navy"} min-w-0 p-3.5`}>
-              <p className="truncate font-display text-base font-semibold text-royal-gold">{e.name}</p>
-              <p className="font-caps text-[9px] tracking-widest text-cream/70">{e.attend.toUpperCase()}</p>
-              <p className="mt-1.5 line-clamp-4 break-words text-xs leading-relaxed text-ivory/90">{e.message}</p>
-            </div>
+      {wishes.length > 0 ? (
+        <div className="mb-4 grid grid-cols-1 gap-3 text-left sm:grid-cols-2">
+          {wishes.slice(0, 4).map((w, i) => (
+            <WishCard key={w.id} w={w} i={i} />
           ))}
         </div>
       ) : (
-        <p className="mb-6 font-display text-base italic text-cream/70">Jadilah yang pertama mengirim ucapan & doa.</p>
+        <p className="mb-4 font-display text-base italic text-cream/70">{isError ? "Ucapan belum bisa dimuat." : "Jadilah yang pertama mengirim ucapan & doa."}</p>
       )}
+      <button type="button" onClick={() => setWall({ highlight: null })} className="btn-outline-gold mb-6 px-5 py-2 text-xs">
+        <MessageCircleHeart className="h-4 w-4" /> Lihat Semua Ucapan ({wishes.length})
+      </button>
       <form onSubmit={submit} className="card-royal-wine space-y-3 p-5 text-left sm:p-6">
         <input className="field-royal" placeholder="Nama Anda" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} aria-label="Nama" />
         <div className="grid grid-cols-2 gap-3">
           <select className="field-royal" value={attend} onChange={(e) => setAttend(e.target.value)} aria-label="Kehadiran">
-            <option>Hadir</option>
-            <option>Tidak Hadir</option>
-            <option>Masih Ragu</option>
+            {ATTEND_OPTIONS.map((o) => (
+              <option key={o}>{o}</option>
+            ))}
           </select>
           <select className="field-royal" value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="Jumlah tamu">
             {[1, 2, 3, 4].map((n) => (
@@ -299,10 +329,12 @@ function Rsvp({ guest }: { guest: string }) {
         </div>
         <textarea className="field-royal" rows={3} placeholder="Tulis ucapan & doa..." value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} aria-label="Ucapan dan doa" />
         <div className="flex flex-col gap-2 pt-1 sm:flex-row">
-          <button className="btn-gold flex-1 py-3 text-sm">Kirim Ucapan</button>
+          <button disabled={sending} className="btn-gold flex-1 py-3 text-sm disabled:opacity-60">{sending ? "Mengirim…" : "Kirim Ucapan"}</button>
           <a href={wa} target="_blank" rel="noreferrer" className="btn-outline-gold flex-1 py-3 text-center text-sm">Konfirmasi via WhatsApp</a>
         </div>
+        <p className="text-center text-[11px] text-cream/60">Ucapan Anda akan tampil di Dinding Ucapan dan bisa dibaca semua tamu.</p>
       </form>
+      <AnimatePresence>{wall && <WishWallOverlay key="wall" highlightId={wall.highlight} onClose={closeWall} />}</AnimatePresence>
     </>
   );
 }
@@ -312,7 +344,6 @@ function Rsvp({ guest }: { guest: string }) {
 export function Main({ guest }: { guest: string }) {
   const { scrollY } = useScroll();
   const bgY = useTransform(scrollY, [0, 3000], ["0%", "20%"]);
-  const [lightbox, setLightbox] = useState<string | null>(null);
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -330,13 +361,13 @@ export function Main({ guest }: { guest: string }) {
       <Verse />
       <Couple />
 
-      <Band tone="wine">
+      <Band tone="wine" seed={6}>
         <Heading kicker="Save the Date">Menghitung Hari</Heading>
         <img src={calendar.url} alt="18 & 20" className="floaty mx-auto h-36 sm:h-40" />
         <Countdown />
       </Band>
 
-      <Band>
+      <Band seed={7} butterflies={2}>
         <Heading kicker="Rangkaian Acara">Jadwal Acara</Heading>
         <div className="relative ml-6 space-y-8 text-center sm:ml-8">
           <div className="absolute -left-[21px] bottom-10 top-10 w-px bg-royal-gold/45 sm:-left-[29px]" aria-hidden />
@@ -346,19 +377,12 @@ export function Main({ guest }: { guest: string }) {
         <img src={pin.url} alt="" className="mx-auto mt-10 h-16 opacity-85" />
       </Band>
 
-      <Band tone="wine" className="sm:max-w-3xl">
-        <Heading kicker="Momen Bahagia">Galeri</Heading>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          {GALLERY.map((g, i) => (
-            <button key={i} onClick={() => setLightbox(g)}
-              className={`${TILT[i]} ${i === 0 ? "row-span-2" : ""} rounded-lg border border-royal-gold/60 bg-royal-navy p-1 shadow-[0_14px_28px_-14px_oklch(0.1_0.03_260/0.9)] transition-transform duration-500 hover:rotate-0 hover:scale-[1.03]`}>
-              <img src={g} alt={`Galeri ${i + 1}`} loading="lazy" className={`w-full rounded-md object-cover ${i === 0 ? "h-full" : "aspect-square"}`} />
-            </button>
-          ))}
-        </div>
+      <Band tone="wine" className="sm:max-w-4xl" seed={8}>
+        <Heading kicker="Momen Bahagia">Galeri Kisah Kami</Heading>
+        <GalleryStories />
       </Band>
 
-      <Band>
+      <Band seed={9}>
         <Heading kicker="Tanda Kasih">Kado Digital</Heading>
         <p className="mb-6 text-sm text-cream/80">Doa restu Anda adalah hadiah terindah. Namun jika ingin memberi tanda kasih, dapat melalui:</p>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -383,18 +407,21 @@ export function Main({ guest }: { guest: string }) {
         </div>
       </Band>
 
-      <Band>
+      <Band tone="wine" seed={10} butterflies={2}>
         <Heading kicker="Konfirmasi Kehadiran">Kartu Ucapan & Doa</Heading>
         <Rsvp guest={guest} />
       </Band>
 
       <section className="relative overflow-hidden bg-royal-navy px-6 pb-28 pt-16 text-center">
         <div className="absolute inset-x-0 top-0 h-[38%] rounded-b-[50%_3rem] border-b border-royal-gold/40 bg-royal-wine" />
+        <PetalRain count={9} seed={11} />
+        <Twinkles count={10} seed={11} />
+        <ButterflyFlock count={3} />
         <BotanicalSpray className="sway pointer-events-none absolute -bottom-2 -left-6 w-44 opacity-80 sm:w-64" />
         <BotanicalSpray className="sway pointer-events-none absolute -bottom-2 -right-6 w-44 opacity-80 sm:w-64" style={{ ["--orn-flip" as string]: "scaleX(-1)" }} />
         <motion.div {...reveal} className="relative mx-auto max-w-md">
           <div className="mx-auto w-36 rounded-t-full border border-royal-gold/60 bg-royal-navy px-4 pb-5 pt-8 shadow-[0_16px_36px_-16px_oklch(0.1_0.03_260/0.9)]">
-            <img src={emblem.url} alt="S&L" className="mx-auto h-24" />
+            <img src={emblem.url} alt="S&L" className="floaty mx-auto h-24" />
           </div>
           <p className="mt-6 text-sm leading-relaxed text-cream/85">
             Merupakan suatu kehormatan dan kebahagiaan bagi kami apabila Bapak/Ibu/Saudara/i berkenan hadir dan memberikan doa restu.
@@ -404,14 +431,6 @@ export function Main({ guest }: { guest: string }) {
         </motion.div>
       </section>
 
-      {lightbox && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-night/95 p-4" onClick={() => setLightbox(null)}>
-          <button className="absolute right-4 top-4 text-ivory" aria-label="Tutup">
-            <X />
-          </button>
-          <img src={lightbox} alt="" className="max-h-full max-w-full rounded-xl" />
-        </div>
-      )}
     </main>
   );
 }
